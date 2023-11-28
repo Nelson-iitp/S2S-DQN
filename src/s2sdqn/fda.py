@@ -78,8 +78,15 @@ def optimize(MAXITER, randflowF, costF, beta, alpha, base_flows=None, seed=None)
                 s0.append( num/np.abs(flow_i - Neighbour_X[j]))  
                 #s0.append( num/l2(flow_i - Neighbour_X[j]) )  # if useing, also change line [121, 132]
                 #@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=@=#=
-
+            #print(f'{len(s0)}, {s0=}')
+            flow2best=False
             if best_neighbour_cost < Flow_fitness[i]:
+                if not(s0[best_neighbour_at].any()==np.nan or\
+                   s0[best_neighbour_at].any()==np.inf or \
+                   s0[best_neighbour_at].any()==-np.inf): flow2best=True
+                
+            
+            if flow2best:
                 V = prng.normal(0,1)*s0[best_neighbour_at] #<---- flope of best neighbour 
                 new_flow_i = flow_i + \
                             V * ( (flow_i-best_neighbour)/l2(flow_i-best_neighbour))
@@ -111,5 +118,4 @@ def optimize(MAXITER, randflowF, costF, beta, alpha, base_flows=None, seed=None)
     #best_flow_cost = Flow_fitness[best_flow_at]
 
     return Flow_X, Flow_fitness
-
 

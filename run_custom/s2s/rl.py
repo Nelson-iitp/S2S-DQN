@@ -5,15 +5,18 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from known.basic import Remap
+from known import Remap
+from known.mod import clone, requires_grad_
 from tqdm import tqdm
 import torch as tt
 import torch.nn as nn
 
-from math import inf, nan
-from .modular import clone, requires_grad_
-from .tf import EncodingTransformer, DecodingTransformer, TrainableLinearPE, configure_optimizers
-from .tf import  S2STransformer, MS2STransformer, MXS2STransformer
+
+from .tf import EncodingTransformer, DecodingTransformer, Optimizers
+from .pose import TrainableLinearPE
+from .attn import causal_mask
+from .s2stf import  S2STransformer, MS2STransformer, MXS2STransformer
+configure_optimizers = Optimizers.GPTAdamW
 # -= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= 
 # Required Function (Internal)
 # -= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= 
@@ -114,6 +117,7 @@ class QPIE:
         return True
 
 #-----------------------------------------------------------------------------------------------------
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 """ [B] Sequence-to-Sequence DQN Value Network """
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -121,34 +125,13 @@ class S2SDQN(QPIE):
 
     def __init__(self,     
             n_actions,
-            embed_dim,
-
-            encoder_block_size,
-            encoder_vocab_count,
-            encoder_hidden_dim,
-            encoder_activation,
-            encoder_num_heads,
-            encoder_num_layers,
-            encoder_norm_eps, # final norm # keep zero to not use norm
-            encoder_dropout,
-            encoder_norm_first,
-
-            decoder_block_size,
-            decoder_vocab_count,
-            decoder_hidden_dim,
-            decoder_activation,
-            decoder_num_heads,
-            decoder_num_layers,
-            decoder_norm_eps, # final norm # keep zero to not use norm
-            decoder_dropout,
-            decoder_norm_first,
-
+            custom_encoder,
+            custom_decoder,
             dense_layer_dims,
             dense_actFs,
             dense_bias,
 
             xavier_init,
-
             has_target = False, 
             dtype = None, 
             device = None,
@@ -158,43 +141,8 @@ class S2SDQN(QPIE):
             value_theta = S2STransformer( 
                 n_actions=n_actions,
                 # ===========================================================
-                custom_encoder= EncodingTransformer(
-                        embed_size=embed_dim,
-                        vocab_size=encoder_vocab_count,
-                        pos_embed=TrainableLinearPE(
-                            input_size=embed_dim,
-                            block_size=encoder_block_size,
-                            dtype=dtype, device=device,
-                        ),
-                        num_heads=encoder_num_heads,
-                        hidden_size=encoder_hidden_dim,
-                        activation=encoder_activation,
-                        num_layers=encoder_num_layers,
-                        dropout=encoder_dropout,
-                        layer_norm_eps=1e-8,
-                        norm_first=encoder_norm_first,
-                        coder_norm_eps=encoder_norm_eps,
-                        dtype=dtype, device=device,),
-                # ===========================================================
-
-                # ===========================================================
-                custom_decoder=DecodingTransformer(
-                    embed_size=embed_dim,
-                    vocab_size=decoder_vocab_count,
-                    pos_embed=TrainableLinearPE(
-                        input_size=embed_dim,
-                        block_size=decoder_block_size,
-                        dtype=dtype, device=device,
-                    ),
-                    num_heads=decoder_num_heads,
-                    hidden_size=decoder_hidden_dim,
-                    activation=decoder_activation,
-                    num_layers=decoder_num_layers,
-                    dropout=decoder_dropout,
-                    layer_norm_eps=1e-8,
-                    norm_first=decoder_norm_first,
-                    coder_norm_eps=decoder_norm_eps,
-                    dtype=dtype, device=device,),
+                custom_encoder=custom_encoder,
+                custom_decoder=custom_decoder,
                 # ===========================================================
                 dense_layer_dims=dense_layer_dims,
                 dense_actFs=dense_actFs,
@@ -203,9 +151,10 @@ class S2SDQN(QPIE):
                 dtype=dtype, device=device,) 
                 # ++++++++++++++++++++++++++++++++++++++++++++++++++++
             super().__init__(value_theta, has_target, dtype, device)
-            self.encoder_block_size = encoder_block_size
-            self.decoder_block_size = decoder_block_size
-            self.causal_mask = tt.triu(tt.full((self.decoder_block_size, self.decoder_block_size), True, device=self.device), diagonal=1)
+            self.encoder_block_size = value_theta.encoder.block_size
+            self.decoder_block_size = value_theta.decoder.block_size
+            self.causal_mask = causal_mask(self.decoder_block_size, device=self.device)
+            #tt.triu(tt.full((self.decoder_block_size, self.decoder_block_size), True, device=self.device), diagonal=1)
             # ===========================================================
             self.encoder_start_index = 0
             self.encoder_end_index = self.encoder_start_index+self.encoder_block_size
@@ -215,7 +164,7 @@ class S2SDQN(QPIE):
     def optimizer(self, learning_rate, weight_decay, betas=(0.9, 0.999)):
         return configure_optimizers(
             model=self.theta,
-            device_type=self.device,
+            device=self.device,
             weight_decay=weight_decay,
             learning_rate=learning_rate,
             betas=betas)
@@ -232,8 +181,8 @@ class S2SDQN(QPIE):
         decoder_in = state[..., self.decoder_start_index:self.decoder_end_index] 
         label_out = state[..., self.decoder_start_index+1:self.decoder_end_index+1]  # shifted right
         #key_padding_mask = state[:, self.sep_mask_L:self.sep_mask_H]
-        if target: out = self.theta_(encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
-        else:      out = self.theta (encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
+        if target: out = self.theta_(encoder_in, decoder_in, tgt_mask = self.causal_mask,  )
+        else:      out = self.theta (encoder_in, decoder_in, tgt_mask = self.causal_mask,  )
         return out
 
     def predict_batch(self, state, ts): #<-- called in batch mode
@@ -242,315 +191,174 @@ class S2SDQN(QPIE):
         return tt.argmax(out, dim=-1)[:, ts].cpu().numpy()
     
     def predict(self, state, ts): # <---- called in explore mode
+        #state = state.unsqueeze(0)
         state = state.to(device=self.device) #<-- add batch dim
         out = self.forward(state)
         return tt.argmax(out, dim=-1)[ts].item() #.cpu().numpy()[ts]
 
     def predict_(self, state, ts): # <---- called in explore mode
+        #state = state.unsqueeze(0)
         state = state.to(device=self.device) #<-- add batch dim
         out = self.forward(state)
         outX = tt.argmax(out, dim=-1)
         return out, outX, outX[ts].item()
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-""" [M] MSequence-to-Sequence DQN Value Network """
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class MS2SDQN(QPIE):
-
-    def __init__(self,     
-            n_actions,
-            embed_dim,
-
-            encoder_block_size,
-            encoder_vocab_counts,
-            encoder_hidden_dim,
-            encoder_activation,
-            encoder_num_heads,
-            encoder_num_layers,
-            encoder_norm_eps, # final norm # keep zero to not use norm
-            encoder_dropout,
-            encoder_norm_first,
-
-            encoder_decoder_layer_mapping,
-
-            decoder_block_size,
-            decoder_vocab_count,
-            decoder_hidden_dim,
-            decoder_activation,
-            decoder_num_heads,
-            decoder_num_layers,
-            decoder_norm_eps, # final norm # keep zero to not use norm
-            decoder_dropout,
-            decoder_norm_first,
-
-            dense_layer_dims,
-            dense_actFs,
-            dense_bias,
-
-            xavier_init,
-
-            has_target = False, 
-            dtype = None, 
-            device = None,
-            ):
-
-            # ++++++++++++++++++++++++++++++++++++++++++++++++++++
-            value_theta = MS2STransformer( 
-                n_actions=n_actions,
-                # ===========================================================
-                custom_encoders= [EncodingTransformer(
-                        embed_size=embed_dim,
-                        vocab_size=encoder_vocab_count,
-                        pos_embed=TrainableLinearPE(
-                            input_size=embed_dim,
-                            block_size=encoder_block_size,
-                            dtype=dtype, device=device,
-                        ),
-                        num_heads=encoder_num_heads,
-                        hidden_size=encoder_hidden_dim,
-                        activation=encoder_activation,
-                        num_layers=encoder_num_layers,
-                        dropout=encoder_dropout,
-                        layer_norm_eps=1e-8,
-                        norm_first=encoder_norm_first,
-                        coder_norm_eps=encoder_norm_eps,
-                        dtype=dtype, device=device,) for encoder_vocab_count in encoder_vocab_counts],
-                # ===========================================================
-                encoder_decoder_layer_mapping=encoder_decoder_layer_mapping,
-                # ===========================================================
-                custom_decoder=DecodingTransformer(
-                    embed_size=embed_dim,
-                    vocab_size=decoder_vocab_count,
-                    pos_embed=TrainableLinearPE(
-                        input_size=embed_dim,
-                        block_size=decoder_block_size,
-                        dtype=dtype, device=device,
-                    ),
-                    num_heads=decoder_num_heads,
-                    hidden_size=decoder_hidden_dim,
-                    activation=decoder_activation,
-                    num_layers=decoder_num_layers,
-                    dropout=decoder_dropout,
-                    layer_norm_eps=1e-8,
-                    norm_first=decoder_norm_first,
-                    coder_norm_eps=decoder_norm_eps,
-                    dtype=dtype, device=device,),
-                # ===========================================================
-                dense_layer_dims=dense_layer_dims,
-                dense_actFs=dense_actFs,
-                dense_bias=dense_bias,
-                xavier_init=xavier_init,
-                dtype=dtype, device=device,) 
-                # ++++++++++++++++++++++++++++++++++++++++++++++++++++
-            super().__init__(value_theta, has_target, dtype, device)
-            self.encoder_block_size = encoder_block_size
-            self.decoder_block_size = decoder_block_size
-            self.causal_mask = tt.triu(tt.full((self.decoder_block_size, self.decoder_block_size), True, device=self.device), diagonal=1)
-            self.n_encoders = len(encoder_vocab_counts)
-            # ===========================================================
-            self.encoder_start_index = list(range(0, self.encoder_block_size*self.n_encoders, self.encoder_block_size))
-            self.encoder_end_index = [ esi+self.encoder_block_size for esi in self.encoder_start_index ]
-
-            self.decoder_start_index = self.encoder_end_index[-1]
-            self.decoder_end_index = self.decoder_start_index+self.decoder_block_size
-
-    def optimizer(self, learning_rate, weight_decay, betas=(0.9, 0.999)):
-        return configure_optimizers(
-            model=self.theta,
-            device_type=self.device,
-            weight_decay=weight_decay,
-            learning_rate=learning_rate,
-            betas=betas)
-    
-
-    """NOTE:
-            
-        state contains - encoder input sequence and decoder output sequence
-        state is a torch tensor of dtype = tt.long
-
-    """
-    def forward(self, state, target=False): #<-- called in batch mode
-        encoder_in = [state[..., encoder_start_index:encoder_end_index] for (encoder_start_index, encoder_end_index) in zip(self.encoder_start_index,self.encoder_end_index)]
-        decoder_in = state[..., self.decoder_start_index:self.decoder_end_index] 
-        label_out = state[..., self.decoder_start_index+1:self.decoder_end_index+1]  # shifted right
-        #key_padding_mask = state[:, self.sep_mask_L:self.sep_mask_H]
-        if target: out = self.theta_(encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
-        else:      out = self.theta (encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
-        return out
-
-    def predict_batch(self, state, ts): #<-- called in batch mode
-        state = state.to(device=self.device) #<-- add batch dim
-        out = self.forward(state)
-        return tt.argmax(out, dim=-1)[:, ts].cpu().numpy()
-    
-    def predict(self, state, ts): # <---- called in explore mode
-        state = state.to(device=self.device) #<-- add batch dim
-        out = self.forward(state)
-        return tt.argmax(out, dim=-1)[ts].item() #.cpu().numpy()[ts]
-
-    def predict_(self, state, ts): # <---- called in explore mode
-        state = state.to(device=self.device) #<-- add batch dim
-        out = self.forward(state)
-        outX = tt.argmax(out, dim=-1)
-        return out, outX, outX[ts].item()
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-""" [M] MSequence-to-Sequence DQN Value Network """
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class MXS2SDQN(QPIE):
-
-    def __init__(self,     
-            n_actions,
-            embed_dim,
-
-            encoder_block_size,
-            encoder_vocab_counts,
-            encoder_hidden_dim,
-            encoder_activation,
-            encoder_num_heads,
-            encoder_num_layers,
-            encoder_norm_eps, # final norm # keep zero to not use norm
-            encoder_dropout,
-            encoder_norm_first,
-
-            decoder_block_size,
-            decoder_vocab_count,
-            decoder_hidden_dim,
-            decoder_activation,
-            decoder_num_heads,
-            decoder_num_layers,
-            decoder_norm_eps, # final norm # keep zero to not use norm
-            decoder_dropout,
-            decoder_norm_first,
-
-            dense_layer_dims,
-            dense_actFs,
-            dense_bias,
-
-            xavier_init,
-
-            has_target = False, 
-            dtype = None, 
-            device = None,
-            ):
-
-            # ++++++++++++++++++++++++++++++++++++++++++++++++++++
-            n_encoders = len(encoder_vocab_counts)
-            value_theta = MXS2STransformer( 
-                n_actions=n_actions,
-                # ===========================================================
-                custom_encoders= [EncodingTransformer(
-                        embed_size=embed_dim,
-                        vocab_size=encoder_vocab_count,
-                        pos_embed=TrainableLinearPE(
-                            input_size=embed_dim,
-                            block_size=encoder_block_size,
-                            dtype=dtype, device=device,
-                        ),
-                        num_heads=encoder_num_heads,
-                        hidden_size=encoder_hidden_dim,
-                        activation=encoder_activation,
-                        num_layers=encoder_num_layers,
-                        dropout=encoder_dropout,
-                        layer_norm_eps=1e-8,
-                        norm_first=encoder_norm_first,
-                        coder_norm_eps=encoder_norm_eps,
-                        dtype=dtype, device=device,) for encoder_vocab_count in encoder_vocab_counts],
-                # ===========================================================
-                # ===========================================================
-                custom_decoder=DecodingTransformer(
-                    embed_size=embed_dim*n_encoders,
-                    vocab_size=decoder_vocab_count,
-                    pos_embed=TrainableLinearPE(
-                        input_size=embed_dim*n_encoders,
-                        block_size=decoder_block_size,
-                        dtype=dtype, device=device,
-                    ),
-                    num_heads=decoder_num_heads,
-                    hidden_size=decoder_hidden_dim,
-                    activation=decoder_activation,
-                    num_layers=decoder_num_layers,
-                    dropout=decoder_dropout,
-                    layer_norm_eps=1e-8,
-                    norm_first=decoder_norm_first,
-                    coder_norm_eps=decoder_norm_eps,
-                    dtype=dtype, device=device,),
-                # ===========================================================
-                dense_layer_dims=dense_layer_dims,
-                dense_actFs=dense_actFs,
-                dense_bias=dense_bias,
-                xavier_init=xavier_init,
-                dtype=dtype, device=device,) 
-                # ++++++++++++++++++++++++++++++++++++++++++++++++++++
-            super().__init__(value_theta, has_target, dtype, device)
-            self.encoder_block_size = encoder_block_size
-            self.decoder_block_size = decoder_block_size
-            self.causal_mask = tt.triu(tt.full((self.decoder_block_size, self.decoder_block_size), True, device=self.device), diagonal=1)
-            self.n_encoders = len(encoder_vocab_counts)
-            # ===========================================================
-            self.encoder_start_index = list(range(0, self.encoder_block_size*self.n_encoders, self.encoder_block_size))
-            self.encoder_end_index = [ esi+self.encoder_block_size for esi in self.encoder_start_index ]
-
-            self.decoder_start_index = self.encoder_end_index[-1]
-            self.decoder_end_index = self.decoder_start_index+self.decoder_block_size
-
-    def optimizer(self, learning_rate, weight_decay, betas=(0.9, 0.999)):
-        return configure_optimizers(
-            model=self.theta,
-            device_type=self.device,
-            weight_decay=weight_decay,
-            learning_rate=learning_rate,
-            betas=betas)
-    
-
-    """NOTE:
-            
-        state contains - encoder input sequence and decoder output sequence
-        state is a torch tensor of dtype = tt.long
-
-    """
-    def forward(self, state, target=False): #<-- called in batch mode
-        encoder_in = [state[..., encoder_start_index:encoder_end_index] for (encoder_start_index, encoder_end_index) in zip(self.encoder_start_index,self.encoder_end_index)]
-        decoder_in = state[..., self.decoder_start_index:self.decoder_end_index] 
-        label_out = state[..., self.decoder_start_index+1:self.decoder_end_index+1]  # shifted right
-        #key_padding_mask = state[:, self.sep_mask_L:self.sep_mask_H]
-        if target: out = self.theta_(encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
-        else:      out = self.theta (encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
-        return out
-
-    def predict_batch(self, state, ts): #<-- called in batch mode
-        state = state.to(device=self.device) #<-- add batch dim
-        out = self.forward(state)
-        return tt.argmax(out, dim=-1)[:, ts].cpu().numpy()
-    
-    def predict(self, state, ts): # <---- called in explore mode
-        state = state.to(device=self.device) #<-- add batch dim
-        out = self.forward(state)
-        return tt.argmax(out, dim=-1)[ts].item() #.cpu().numpy()[ts]
-
-    def predict_(self, state, ts): # <---- called in explore mode
-        state = state.to(device=self.device) #<-- add batch dim
-        out = self.forward(state)
-        outX = tt.argmax(out, dim=-1)
-        return out, outX, outX[ts].item()
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 
 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# """ [E] E Sequence-to-Sequence DQN Value Network """
+# """ [M] MSequence-to-Sequence DQN Value Network """
 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# class ES2SDQN(QPIE):
+# class MS2SDQN(QPIE):
 
 #     def __init__(self,     
 #             n_actions,
 #             embed_dim,
 
 #             encoder_block_size,
-#             encoder_vocab_count,
+#             encoder_vocab_counts,
+#             encoder_hidden_dim,
+#             encoder_activation,
+#             encoder_num_heads,
+#             encoder_num_layers,
+#             encoder_norm_eps, # final norm # keep zero to not use norm
+#             encoder_dropout,
+#             encoder_norm_first,
+
+#             encoder_decoder_layer_mapping,
+
+#             decoder_block_size,
+#             decoder_vocab_count,
+#             decoder_hidden_dim,
+#             decoder_activation,
+#             decoder_num_heads,
+#             decoder_num_layers,
+#             decoder_norm_eps, # final norm # keep zero to not use norm
+#             decoder_dropout,
+#             decoder_norm_first,
+
+#             dense_layer_dims,
+#             dense_actFs,
+#             dense_bias,
+
+#             xavier_init,
+
+#             has_target = False, 
+#             dtype = None, 
+#             device = None,
+#             ):
+
+#             # ++++++++++++++++++++++++++++++++++++++++++++++++++++
+#             value_theta = MS2STransformer( 
+#                 n_actions=n_actions,
+#                 # ===========================================================
+#                 custom_encoders= [EncodingTransformer(
+#                         embed_size=embed_dim,
+#                         vocab_size=encoder_vocab_count,
+#                         pos_embed=TrainableLinearPE(
+#                             input_size=embed_dim,
+#                             block_size=encoder_block_size,
+#                             dtype=dtype, device=device,
+#                         ),
+#                         num_heads=encoder_num_heads,
+#                         hidden_size=encoder_hidden_dim,
+#                         activation=encoder_activation,
+#                         num_layers=encoder_num_layers,
+#                         dropout=encoder_dropout,
+#                         layer_norm_eps=1e-8,
+#                         norm_first=encoder_norm_first,
+#                         coder_norm_eps=encoder_norm_eps,
+#                         dtype=dtype, device=device,) for encoder_vocab_count in encoder_vocab_counts],
+#                 # ===========================================================
+#                 encoder_decoder_layer_mapping=encoder_decoder_layer_mapping,
+#                 # ===========================================================
+#                 custom_decoder=DecodingTransformer(
+#                     embed_size=embed_dim,
+#                     vocab_size=decoder_vocab_count,
+#                     pos_embed=TrainableLinearPE(
+#                         input_size=embed_dim,
+#                         block_size=decoder_block_size,
+#                         dtype=dtype, device=device,
+#                     ),
+#                     num_heads=decoder_num_heads,
+#                     hidden_size=decoder_hidden_dim,
+#                     activation=decoder_activation,
+#                     num_layers=decoder_num_layers,
+#                     dropout=decoder_dropout,
+#                     layer_norm_eps=1e-8,
+#                     norm_first=decoder_norm_first,
+#                     coder_norm_eps=decoder_norm_eps,
+#                     dtype=dtype, device=device,),
+#                 # ===========================================================
+#                 dense_layer_dims=dense_layer_dims,
+#                 dense_actFs=dense_actFs,
+#                 dense_bias=dense_bias,
+#                 xavier_init=xavier_init,
+#                 dtype=dtype, device=device,) 
+#                 # ++++++++++++++++++++++++++++++++++++++++++++++++++++
+#             super().__init__(value_theta, has_target, dtype, device)
+#             self.encoder_block_size = encoder_block_size
+#             self.decoder_block_size = decoder_block_size
+#             self.causal_mask = tt.triu(tt.full((self.decoder_block_size, self.decoder_block_size), True, device=self.device), diagonal=1)
+#             self.n_encoders = len(encoder_vocab_counts)
+#             # ===========================================================
+#             self.encoder_start_index = list(range(0, self.encoder_block_size*self.n_encoders, self.encoder_block_size))
+#             self.encoder_end_index = [ esi+self.encoder_block_size for esi in self.encoder_start_index ]
+
+#             self.decoder_start_index = self.encoder_end_index[-1]
+#             self.decoder_end_index = self.decoder_start_index+self.decoder_block_size
+
+#     def optimizer(self, learning_rate, weight_decay, betas=(0.9, 0.999)):
+#         return configure_optimizers(
+#             model=self.theta,
+#             device=self.device,
+#             weight_decay=weight_decay,
+#             learning_rate=learning_rate,
+#             betas=betas)
+    
+
+#     """NOTE:
+            
+#         state contains - encoder input sequence and decoder output sequence
+#         state is a torch tensor of dtype = tt.long
+
+#     """
+#     def forward(self, state, target=False): #<-- called in batch mode
+#         encoder_in = [state[..., encoder_start_index:encoder_end_index] for (encoder_start_index, encoder_end_index) in zip(self.encoder_start_index,self.encoder_end_index)]
+#         decoder_in = state[..., self.decoder_start_index:self.decoder_end_index] 
+#         label_out = state[..., self.decoder_start_index+1:self.decoder_end_index+1]  # shifted right
+#         #key_padding_mask = state[:, self.sep_mask_L:self.sep_mask_H]
+#         if target: out = self.theta_(encoder_in, decoder_in, tgt_mask = self.causal_mask, )
+#         else:      out = self.theta (encoder_in, decoder_in, tgt_mask = self.causal_mask, )
+#         return out
+
+#     def predict_batch(self, state, ts): #<-- called in batch mode
+#         state = state.to(device=self.device) #<-- add batch dim
+#         out = self.forward(state)
+#         return tt.argmax(out, dim=-1)[:, ts].cpu().numpy()
+    
+#     def predict(self, state, ts): # <---- called in explore mode
+#         state = state.to(device=self.device) #<-- add batch dim
+#         out = self.forward(state)
+#         return tt.argmax(out, dim=-1)[ts].item() #.cpu().numpy()[ts]
+
+#     def predict_(self, state, ts): # <---- called in explore mode
+#         state = state.to(device=self.device) #<-- add batch dim
+#         out = self.forward(state)
+#         outX = tt.argmax(out, dim=-1)
+#         return out, outX, outX[ts].item()
+# # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+# # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# """ [M] MSequence-to-Sequence DQN Value Network """
+# # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# class MXS2SDQN(QPIE):
+
+#     def __init__(self,     
+#             n_actions,
+#             embed_dim,
+
+#             encoder_block_size,
+#             encoder_vocab_counts,
 #             encoder_hidden_dim,
 #             encoder_activation,
 #             encoder_num_heads,
@@ -581,10 +389,11 @@ class MXS2SDQN(QPIE):
 #             ):
 
 #             # ++++++++++++++++++++++++++++++++++++++++++++++++++++
-#             value_theta = S2STransformer( 
+#             n_encoders = len(encoder_vocab_counts)
+#             value_theta = MXS2STransformer( 
 #                 n_actions=n_actions,
 #                 # ===========================================================
-#                 custom_encoder= EncodingTransformer(
+#                 custom_encoders= [EncodingTransformer(
 #                         embed_size=embed_dim,
 #                         vocab_size=encoder_vocab_count,
 #                         pos_embed=TrainableLinearPE(
@@ -600,26 +409,25 @@ class MXS2SDQN(QPIE):
 #                         layer_norm_eps=1e-8,
 #                         norm_first=encoder_norm_first,
 #                         coder_norm_eps=encoder_norm_eps,
-#                         dtype=dtype, device=device,),
+#                         dtype=dtype, device=device,) for encoder_vocab_count in encoder_vocab_counts],
 #                 # ===========================================================
-
 #                 # ===========================================================
-#                 custom_decoder=EDecodingTransformer(
-#                     embed_size=embed_dim,
+#                 custom_decoder=DecodingTransformer(
+#                     embed_size=embed_dim*n_encoders,
 #                     vocab_size=decoder_vocab_count,
 #                     pos_embed=TrainableLinearPE(
-#                         input_size=embed_dim,
+#                         input_size=embed_dim*n_encoders,
 #                         block_size=decoder_block_size,
 #                         dtype=dtype, device=device,
 #                     ),
 #                     num_heads=decoder_num_heads,
 #                     hidden_size=decoder_hidden_dim,
 #                     activation=decoder_activation,
-#                     num_layers=decoder_num_layers, incoder_num_layers=1,
+#                     num_layers=decoder_num_layers,
 #                     dropout=decoder_dropout,
 #                     layer_norm_eps=1e-8,
 #                     norm_first=decoder_norm_first,
-#                     coder_norm_eps=decoder_norm_eps, incoder_norm_eps=decoder_norm_eps,
+#                     coder_norm_eps=decoder_norm_eps,
 #                     dtype=dtype, device=device,),
 #                 # ===========================================================
 #                 dense_layer_dims=dense_layer_dims,
@@ -632,16 +440,18 @@ class MXS2SDQN(QPIE):
 #             self.encoder_block_size = encoder_block_size
 #             self.decoder_block_size = decoder_block_size
 #             self.causal_mask = tt.triu(tt.full((self.decoder_block_size, self.decoder_block_size), True, device=self.device), diagonal=1)
+#             self.n_encoders = len(encoder_vocab_counts)
 #             # ===========================================================
-#             self.encoder_start_index = 0
-#             self.encoder_end_index = self.encoder_start_index+self.encoder_block_size
-#             self.decoder_start_index = self.encoder_end_index
+#             self.encoder_start_index = list(range(0, self.encoder_block_size*self.n_encoders, self.encoder_block_size))
+#             self.encoder_end_index = [ esi+self.encoder_block_size for esi in self.encoder_start_index ]
+
+#             self.decoder_start_index = self.encoder_end_index[-1]
 #             self.decoder_end_index = self.decoder_start_index+self.decoder_block_size
 
 #     def optimizer(self, learning_rate, weight_decay, betas=(0.9, 0.999)):
 #         return configure_optimizers(
 #             model=self.theta,
-#             device_type=self.device,
+#             device=self.device,
 #             weight_decay=weight_decay,
 #             learning_rate=learning_rate,
 #             betas=betas)
@@ -654,12 +464,12 @@ class MXS2SDQN(QPIE):
 
 #     """
 #     def forward(self, state, target=False): #<-- called in batch mode
-#         encoder_in = state[..., self.encoder_start_index:self.encoder_end_index] 
+#         encoder_in = [state[..., encoder_start_index:encoder_end_index] for (encoder_start_index, encoder_end_index) in zip(self.encoder_start_index,self.encoder_end_index)]
 #         decoder_in = state[..., self.decoder_start_index:self.decoder_end_index] 
 #         label_out = state[..., self.decoder_start_index+1:self.decoder_end_index+1]  # shifted right
 #         #key_padding_mask = state[:, self.sep_mask_L:self.sep_mask_H]
-#         if target: out = self.theta_(encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
-#         else:      out = self.theta (encoder_in, decoder_in, tgt_mask = self.causal_mask, tgt_key_padding_mask = None)
+#         if target: out = self.theta_(encoder_in, decoder_in, tgt_mask = self.causal_mask, )
+#         else:      out = self.theta (encoder_in, decoder_in, tgt_mask = self.causal_mask, )
 #         return out
 
 #     def predict_batch(self, state, ts): #<-- called in batch mode
@@ -679,6 +489,9 @@ class MXS2SDQN(QPIE):
 #         return out, outX, outX[ts].item()
 # # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+
+# # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 """ [E] Policy Evaluation/Testing ~ does not use explorers 
     NOTE: make sure to put policies in .eval() mode before predicting
 """
@@ -694,7 +507,7 @@ class Eval:
         if verbose>0: print('[RESET]')
         if render==2: env.render()
 
-        if max_steps is None: max_steps=inf
+        if max_steps is None: max_steps=tt.inf
         while not (d or t>=max_steps):
             a = acts[t]
             s, t, d, r = env.step(a)
@@ -721,7 +534,7 @@ class Eval:
         if verbose>0: print('[RESET]')
         if render==2: env.render()
         acts=[]
-        if max_steps is None: max_steps=inf
+        if max_steps is None: max_steps=tt.inf
         while not (d or t>=max_steps):
             a = pie.predict(s, t)
             s, t, d, r = env.step(a)
@@ -810,7 +623,7 @@ class Eval:
     @staticmethod
     @tt.no_grad() 
     def explore_policy(n, env, pie, max_steps=None):
-        if max_steps is None: max_steps=inf
+        if max_steps is None: max_steps=tt.inf
         buffer = []
         for _ in range(n):
             s, t, d= env.reset()
@@ -827,7 +640,7 @@ class Eval:
     @staticmethod
     @tt.no_grad() 
     def explore_greedy(n, env, pie, rie, epsilon, erng, max_steps=None):
-        if max_steps is None: max_steps=inf
+        if max_steps is None: max_steps=tt.inf
         buffer = []
         for _ in range(n):
             s, t, d= env.reset()
@@ -840,7 +653,6 @@ class Eval:
             S = tt.clone(s) if tt.is_tensor(s) else tt.tensor(s, dtype=tt.long)
             buffer.append((S, A, R))
         return buffer
-
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -891,7 +703,7 @@ class DQN:
     # -= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= 
         # [*] setup 
         from math import inf, nan
-        from deep.rl import Eval, RIE
+        
         
         has_target = (double or tuf>0)
         val_opt = pie.optimizer(**pie_optA)
