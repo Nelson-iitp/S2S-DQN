@@ -8,8 +8,8 @@ from known import Remap
 from tqdm import tqdm
 import torch as tt
 import torch.nn as nn
-from .pie import RandomPie
-from .env import Eval
+from .pie import RandomPie, Eval
+
 __all__ = ['Train']
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

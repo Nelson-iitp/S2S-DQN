@@ -9,7 +9,7 @@ from known.ktf import Vocab
 __all__ = [
     'ComputeNetwork',
     'Infra',
-    'Env'
+    'Env',
     'Simulator',
     'Environment',
     'WorkersEnv',

@@ -2,11 +2,12 @@
 import os
 import maco
 
-import s2sdqn
+from known import ktf
 import torch as tt
 import torch.nn as nn
-
+import s2sdqn
 import numpy as np
+
 
 auto_device = 'cuda' if tt.cuda.is_available() else 'cpu'
 
@@ -77,6 +78,21 @@ class Exp:
             frozen=None,
             seed=seed, ).set_huristic_seed(heed)
 
+    def ftEnv(self, seed=None, heed=None):
+        # training env
+        return self._Env().load_states(
+            states=self.ds_states,
+            frozen=None,
+            seed=seed, ).set_huristic_seed(heed)
+
+    # validation envs
+    def fvEnvs(self, heeds=None):
+        if heeds is None: heeds=[None for _ in range(len(self.ds_states))]
+        return [self._Env().load_states(
+            states=self.ds_states,
+            frozen=i, #<--- for sequential test
+            seed=None, ).set_huristic_seed(heeds[i]) for i in range(len(self.ds_states)) ]
+    
 
     # validation envs
     def vEnv(self, heed=None):
@@ -93,6 +109,8 @@ class Exp:
             frozen=i, #<--- for sequential test
             seed=None, ).set_huristic_seed(heeds[i]) for i in range(len(self.ds_test)) ]
 
+
+    
     # single frozen env
     def sEnv(self, i:int, heed=None):
         return self._Env().load_states(
@@ -103,71 +121,79 @@ class Exp:
 
 class ExpA(Exp):
 
-    def __init__(self, device=None) -> None:
+    def __init__(self, catenate=False, device=None) -> None:
         super().__init__(
                 alias='A',
                 network=maco.config.db.X3e1c(),
                 ds_name='X3e1c_A',
                 scale=0.01, quanta=5.0, n_steps=48, device=device)
-        
+        self.catenate = catenate
+        dim_multiplier = 4 if self.catenate else 1
+
         self.coderArgsE={
             'd_model':          32,
             'nhead':            4,
             'dim_feedforward':  64,
-            'dropout':          0.1,
+            'dropout':          0.0,
             'activation':       "gelu",
-            'normF':            s2sdqn.ktf.ex.Norm.layerN,
+            'normF':            ktf.Norm.rmsN,
             'normA':            {'bias': True, 'eps': 1e-06},
             'norm_first':       True,
+            'attention2F':      (nn.MultiheadAttention, dict(batch_first=True)),
+            #'attention2F':      (ktf.Attention, dict(score2F=(ktf.LearnableScoring, {}))),
+            
             }
         self.coderArgsD={
-            'd_model':          32*4,
-            'nhead':            8,
-            'dim_feedforward':  64*4,
-            'dropout':          0.1,
+            'd_model':          32*dim_multiplier,
+            'nhead':            4*dim_multiplier,
+            'dim_feedforward':  64*dim_multiplier,
+            'dropout':          0.0,
             'activation':       "gelu",
-            'normF':            s2sdqn.ktf.ex.Norm.layerN,
+            'normF':            ktf.Norm.rmsN,
             'normA':            {'bias': True, 'eps': 1e-06},
             'norm_first':       True,
+            'attention2F':      (nn.MultiheadAttention, dict(batch_first=True)),
+            #'attention2F':      (ktf.Attention, dict(score2F=(ktf.LearnableScoring, {}))),
             }
         
+
         self.thetaArgs=dict(
-            catenate=True,
-            dense_layer_dims=[64*4, 64*4, 64*4 ],
+            catenate=self.catenate,
+            dense_layer_dims=[64*dim_multiplier, 64*dim_multiplier, 64*dim_multiplier ],
             dense_actFs=[ nn.Tanh(), nn.ELU() ],
             dense_bias=True,
-            #edl_mapping=list(range(len(self.env.encoder_vocab_sizes)))+list(range(len(self.env.encoder_vocab_sizes))),
+            edl_mapping= None,
             xavier_init=False,
         )
         
     def encoders(self):
         return [
-            s2sdqn.ktf.Encoder(
+            ktf.Encoder(
                 vocab_size=encoder_vocab_size,
-                pose=s2sdqn.ktf.Pose.TrainableLinear(
+                pose=ktf.Pose.TrainableLinear(
                     input_size=self.coderArgsE['d_model'],
                     block_size=self.T, 
                     **self.factory),
                 coderA=self.coderArgsE,
-                num_layers=2,
+                num_layers=1,
                 norm=None,
                 **self.factory) \
             for encoder_vocab_size in self.env.encoder_vocab_sizes]
 
     def decoder(self):
-        return s2sdqn.ktf.Decoder(
+        return ktf.Decoder(
             vocab_size=self.env.decoder_vocab_size,
-            pose=s2sdqn.ktf.Pose.TrainableLinear(
+            pose=ktf.Pose.TrainableLinear(
                     input_size=self.coderArgsD['d_model'],
                     block_size=self.T, 
                     **self.factory),
                 coderA=self.coderArgsD,
-                num_layers=8,
+                num_layers=4,
                 norm=None,
                 **self.factory)
     
     def theta(self):
-        return s2sdqn.ktf.MultiSeq2SeqTransformer(
+        return ktf.MultiSeq2SeqTransformer(
             custom_encoders=self.encoders(),
             custom_decoder=self.decoder(), 
             n_outputs=self.A,
@@ -185,7 +211,7 @@ class ExpA(Exp):
         )
 
     def optim(self, pie, learning_rate=1e-4, weight_decay=0.0):
-        return s2sdqn.ktf.Optimizers.GPTAdamW(
+        return ktf.Optimizers.GPTAdamW(
             model=pie.theta,
             device=self.factory.get('device', 'cpu'),
             weight_decay=weight_decay,
