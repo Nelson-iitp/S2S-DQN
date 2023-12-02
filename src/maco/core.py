@@ -1,4 +1,14 @@
 
+# ========================================================
+# MACO Mobility Aware Computation Offloading Framework
+# ========================================================
+# core.py
+# Defines objects required for simulation
+# Network and Infrastructure for underlying hardware/connectivity
+# provides sample environment for sequence-to-sequence RL problem
+# ========================================================
+# Author: Nelson.S
+# ========================================================
 
 from math import floor
 import numpy as np
@@ -13,10 +23,9 @@ __all__ = [
     'Simulator',
     'Environment',
     'WorkersEnv',
-
 ]
 
-#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 class ComputeNetwork:
     r""" represnts a network of computing units.
     each unit has a processing capacity in Hz or cycles-per-sec.
@@ -82,9 +91,11 @@ class ComputeNetwork:
             dot.format = save_format
             dot.render(directory=f'{dot.name}')
         return dot
-#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 class Infra:
+    r""" Provides edge-cloud offloading architecture specific netowrk
+    Used in conjunction with a compute network class 
+    """
     
     def render(self):
         print ('[INFRA]\nA: {}, E: {}, C: {},\nVR:{}\nDR:\n{}'.format(self.A, self.E, self.C, self.VR, self.DR))
@@ -93,41 +104,39 @@ class Infra:
         self.E, self.C = E, C
         self.A = self.E+self.C
         self.params = params
-        #for atr in ('BEC','BEE','BCC', 'BUE', 'CE','CC'): setattr(self, atr, getattr(params, atr))
         self.VR =  np.array(([self.params.CE for _ in range(E) ] + [self.params.CC for _ in range(C)]), dtype='float') 
         self.DR = np.zeros((self.A, self.A), dtype='float')
-    #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+    
     def is_edge(self, n): return n<self.E
+    
     def connect(self, n1, n2, bidir=True):
         if n1<self.E:
             self.DR[n1, n2] = self.params.BEE if n2<self.E else self.params.BEC
         else:
             self.DR[n1, n2] = self.params.BEC if n2<self.E else self.params.BCC
         if bidir: self.DR[n2, n1] = self.DR[n1, n2]
+    
     def connect_mesh(self):
         for i in range(self.A):
             for j in range(i, self.A):
                 self.connect(i, j)
         return self
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-""" Environment Class Signature for S2S-Env """
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class Env:
+    r""" Base Class (Signature) for S2S-Offloading Environment used in RL simulation"""
+
     def __init__(self, A, T) -> None:
-        self.A = A #<-- no of actions
-        self.T = T #<-- horizon
-        self.t = 0     # current time step
+        self.A = A      #<-- no of actions
+        self.T = T      #<-- horizon
+        self.t = 0      # current time step
         self.state = None   # obs is may be a tuple - should return tensors
 
     def reset(self, **kwargs): return self.state,  self.t, self.done, 0.0
     def step(self, action, **kwargs): return self.state, self.t, self.done, 0.0
     def render(self, **kwargs): pass
 
-
-
-
 class Simulator:
+    r""" Implements MDP and cost function for S2S-offloading environment"""
     
     def __init__(self, 
                 net, 
@@ -188,6 +197,9 @@ class Simulator:
         return reward, done, next_slot
 
 class Environment(Env):
+    r""" Wraps a simulator for discretizing and shaping state space for S2S-offloading environment.
+    Also implements environment specific heuristic behaviour policies
+    """
 
     @property
     def encoder_vocab_sizes(self): return self.di_vocab.size, self.do_vocab.size, self.cc_vocab.size, self.ll_vocab.size
@@ -220,7 +232,6 @@ class Environment(Env):
         self.iPOS[0] = self.aa_vocab.BOS
         self.WT = tt.tensor(self.aa_vocab.forward(self.iPOS), dtype=tt.long)
      
-    
     def load_states(self, states, frozen=None, seed=None):
         # states is 3-D array (batch, 4, T)
         self.rng = np.random.default_rng(seed)
@@ -264,7 +275,6 @@ class Environment(Env):
         self.aa_vocab.forward1_(action, self.WT, self.t)
         return (self.DT, self.OT, self.CT, self.ZT, self.WT[:-1]), self.t, done, reward
 
-
     def set_huristic_seed(self, seed): 
         self.hrng = np.random.default_rng(seed)
         return self
@@ -305,7 +315,7 @@ class Environment(Env):
                 return self.sim.E # send to cloud
 
     def pie_Huristic_Edge_Cloud_Limited(self, *args):
-        # try to complete using edges only, if all are busy then send to clouds
+        # try to complete using edges only, if all are busy then send to clouds only if compute intensive task
 
         if self.sim.edge_cc[self.sim.near_edge] <= 0.0:  # if zonal edge edge is free then post there
             return self.sim.near_edge
@@ -320,11 +330,13 @@ class Environment(Env):
                 
 class WorkersEnv(Env):
     r"""
-    WorkersEnv:
+    WorkersEnv: Implements a generic S2S-environment for RL based on GAP (Generalized Application Placement)
 
         Given a sequence of tasks ( tokens )
         Place them among workers that have fixed consumption rate per type of task
         Reduce the total finish time
+
+    NOTE: this model can be used to test and benchmark general S2S-RL solutions
     """
     @property
     def encoder_vocab_size(self): return self.task_vocab.size
@@ -333,7 +345,7 @@ class WorkersEnv(Env):
     def decoder_vocab_size(self): return self.worker_vocab.size
 
     def __init__(self, task_symbols, duration, task_set, workers, scale, seed=None ) -> None:
-        r"""
+        r""" 
         # workers is a list of processing time per unit of each type of n_tasks -> list of dict
         # tasks is a list of list of task for each reset
         """
@@ -378,7 +390,6 @@ class WorkersEnv(Env):
         self.t = 0
         return (self.obsS, self.obsW[:-1]), self.t, False, 0.0
 
-
     def step(self, action):
         self.pending-=1
         tt.clip_(self.pending, min=self.min_pending)
@@ -394,8 +405,6 @@ class WorkersEnv(Env):
         done = self.t>=self.T
         cost = tt.max(self.pending)
         return (self.obsS, self.obsW[:-1]), self.t, done, -float(cost)*self.scale
-
-
 
     @staticmethod
     def get(

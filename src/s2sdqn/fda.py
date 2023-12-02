@@ -1,6 +1,15 @@
 
-# Global Section
-#from tqdm import tqdm
+
+# ========================================================
+# S2S-DQN : Sequence-to-Sequence Deep Q Network
+# ========================================================
+# fda.py
+# Implements Flow Direction Algorithm (FDA) 
+# ========================================================
+# Author: Nelson.S
+# ========================================================
+
+
 import numpy as np
 #import matplotlib.pyplot as plt
 import datetime

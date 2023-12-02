@@ -1,13 +1,27 @@
 
+# ========================================================
+# MACO Mobility Aware Computation Offloading Framework
+# ========================================================
+# config.py
+# Defines Global Task Parameters
+# Task generator for synthetic Data
+# Database of Simulation Environments
+# ========================================================
+# Author: Nelson.S
+# ========================================================
+
 import numpy as np
-import os, warnings
+import  warnings
 from .core import ComputeNetwork, Infra
 
-#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-# Global Infra parameters
-class GLOBAL_PARAMS:
 
-    SCALE_B, SCALE_C = 1, 2
+class GLOBAL_PARAMS:
+    r""" Defines task parameters common accross all simulations 
+    This is also used to discretize tasks and create vocabularies
+    """
+
+    SCALE_B, SCALE_C = 1, 2 # scaling factor
+
     # bandwidth in Mbps
     BEC = 8.0*SCALE_B     # bandwidth Edge <--> Cloud
     BEE = 400.0*SCALE_B   # bandwidth Edge <--> Edge
@@ -15,24 +29,25 @@ class GLOBAL_PARAMS:
     BUE = 200.0*SCALE_B   # bandwidth UE <--> Edge
 
     # compute capacity in GHz
-    CE = 10.0*SCALE_C # cpu edge
-    CC = 8.0*SCALE_C # cpu cloud
+    CE = 10.0*SCALE_C   # cpu edge
+    CC = 8.0*SCALE_C    # cpu cloud
 
-    # Global task parameters 
+    # Discretization
     di_low, di_high, di_divs = 50.0, 100.0, 5     # Mega bytes
     do_low, do_high, do_divs = 50.0, 100.0, 5     # Mega bytes
     cc_low, cc_high, cc_divs = 100.0, 600.0, 10   # Giga cycles
-
-    large_computation_limit = cc_low+(cc_high-cc_low)*0.8
-    large_data_limit = di_low+(di_high-di_low)*0.8 + do_low+(do_high-do_low)*0.8 
-
     di_range = np.linspace(di_low, di_high, (int(di_high-di_low)//di_divs + 1), endpoint=True)
     do_range = np.linspace(do_low, do_high, (int(do_high-do_low)//do_divs + 1), endpoint=True)
     cc_range = np.linspace(cc_low, cc_high, (int(cc_high-cc_low)//cc_divs + 1), endpoint=True)
-#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
+    # max data and computation limits
+    large_computation_limit = cc_low+(cc_high-cc_low)*0.8
+    large_data_limit = di_low+(di_high-di_low)*0.8 + do_low+(do_high-do_low)*0.8 
 
 class Gene:
+    r""" provides methods for synthetic data creation 
+    NOTE: use make_ds function to create dataset
+    """
 
     @staticmethod
     def generate_state(ranges, network, steps, seeds):
@@ -43,7 +58,7 @@ class Gene:
 
     @staticmethod
     def generate_tasks(ranges, steps, di_seed, do_seed, cc_seed):
-        # generate a sequence of tasks and a sequence of locations
+        # generate a sequence of tasks 
         di_rng=np.random.default_rng(di_seed)
         do_rng=np.random.default_rng(do_seed)
         cc_rng=np.random.default_rng(cc_seed)
@@ -56,7 +71,7 @@ class Gene:
 
     @staticmethod
     def generate_paths(network, steps, seed):
-        # generate a sequence of tasks and a sequence of locations
+        # generate a sequence of locations
         ll_rng=np.random.default_rng(seed)
         # for location use moves
         stL, stH = int(0.1*steps), int(0.5*steps)
@@ -111,9 +126,8 @@ class Gene:
         np.save(path, states)
         warnings.filterwarnings("default", category=RuntimeWarning)
 
-#=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
 class db:
+    r""" provides a database of preset simulation enviroments containing a Netowrk of Nodes """
     
     def __str__(self) -> str: return f'{self.__dict__}'
 

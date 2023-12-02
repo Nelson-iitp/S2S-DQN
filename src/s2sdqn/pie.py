@@ -1,13 +1,20 @@
 
-
+# ========================================================
+# S2S-DQN : Sequence-to-Sequence Deep Q Network
+# ========================================================
+# pie.py
+# Implements Q-Value based discrete policies
+# Implements other type of policies like Random and Fixed
+# Implements policy evaluation methods
+# ========================================================
+# Author: Nelson.S
+# ========================================================
 
 
 import numpy as np
 import torch as tt
-
 import matplotlib.pyplot as plt
 from math import inf
-
 from known.ktf import Mod
 
 __all__ = [
@@ -18,25 +25,24 @@ __all__ = [
     'MS2SDQN',
     'Eval',
 ]
-# -= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= 
-# Required Function (Internal)
-# -= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= -=-= 
+
 class RandomPie:
+    r""" Implements random policy """
     def __init__(self, Alow, Ahigh, seed=None) -> None: self.Alow, self.Ahigh, self.rng = Alow, Ahigh, np.random.default_rng(seed)
     def __call__(self, *args): return self.rng.integers(self.Alow, self.Ahigh)
 
 class FixedPie:
+    r""" Implements constant policy """
     def __init__(self, Aseq) -> None:  self.Aseq = Aseq
     def __call__(self, s, t): return self.Aseq[t]
     
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-""" [A] Base Value Netowrk Class """
+""" [*] Base Value Netowrk Class """
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class ValuePie: 
     """ base class for value estimators 
-    
-        NOTE: for Q-Values, underlying parameters value_theta should accept state-action pair as 2 sepreate inputs  
-        NOTE: all Value functions (V or Q) are called in batch mode only """
+        NOTE: for Q-Values, underlying parameter network ```value_theta``` should accept state as input
+    """
 
     def Count(self, requires_grad=None): return Mod.Count(self.theta, requires_grad=requires_grad)
 
@@ -45,6 +51,7 @@ class ValuePie:
     def Show(self, values=False): return Mod.Show(self.theta, values=values)
 
     def _build_target(self): return (Mod.SetGrad(Mod.Clone(self.theta), False) if self.has_target else self.theta )
+
     def __init__(self, value_theta,  has_target, dtype, device):
         self.dtype, self.device = dtype, device
         self.has_target = has_target
@@ -120,10 +127,8 @@ class ValuePie:
         self.theta_.eval()
         return True
 
-#-----------------------------------------------------------------------------------------------------
-
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-""" [B] Sequence-to-Sequence DQN Value Network """
+""" [*] Sequence-to-Sequence DQN Value Network """
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 class S2SDQN(ValuePie):
@@ -178,8 +183,10 @@ class S2SDQN(ValuePie):
         out = self.forward(state, target=False)
         outX = tt.argmax(out, dim=-1)
         return out, outX, outX[ts].item()
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+""" [*] Multi Sequence-to-Sequence DQN Value Network """
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 class MS2SDQN(S2SDQN):
 
@@ -207,13 +214,8 @@ class MS2SDQN(S2SDQN):
                 memory_key_padding_mask=None,)
         return out
     
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-
-
-# # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-""" [E] Policy Evaluation/Testing ~ does not use explorers 
+""" [*] Policy Evaluation/Testing 
     NOTE: make sure to put policies in .eval() mode before predicting
 """
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -377,7 +379,6 @@ class Eval:
             buffer.append((S, A, R))
         return buffer
 
-    
     @staticmethod
     def plot_training_result(validation_hist, train_hist, count_hist):
             tEpsilon, tLR, tLoss = train_hist[:, 0], train_hist[:, 1], train_hist[:, 2]
