@@ -53,6 +53,7 @@ class Exp:
         # generate dataset of states
         os.makedirs(self.ds_dir, exist_ok=True)
         maco.config.Gene.make_ds(
+            geolife_npy_list= [],
             path=       self.ds_path,
             network=    self.network,
             n_apps=     n_apps,
@@ -61,6 +62,19 @@ class Exp:
             app_seed=   app_seed,
             path_seed=  path_seed,   )
 
+    def create_ds_geolife(self, n_apps, geolife_npy_list, app_seed, path_seed):
+        # generate dataset of states
+        os.makedirs(self.ds_dir, exist_ok=True)
+        maco.config.Gene.make_ds(
+            geolife_npy_list= geolife_npy_list,
+            path=       self.ds_path,
+            network=    self.network,
+            n_apps=     n_apps,
+            n_paths=    len(geolife_npy_list), 
+            n_steps=    self.T,
+            app_seed=   app_seed,
+            path_seed=  path_seed,   )
+        
     def load_ds(self, split_ratio=0.8):
         self.ds_states =     np.load(self.ds_path)
         self.n_states, n_input_seq, T = self.ds_states.shape
@@ -215,7 +229,7 @@ class ExpA(Exp):
             has_target=True,
             **self.factory
         )
-
+    
     def optim(self, pie, learning_rate=1e-4, weight_decay=0.0):
         return ktf.Optimizers.GPTAdamW(
             model=pie.theta,

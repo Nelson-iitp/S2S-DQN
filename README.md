@@ -15,7 +15,7 @@ special python packages (available on PyPI)
 
 * Pytorch 2.x
 * graphviz
-* known
+* known 0.0.15
 
 ## Run
 

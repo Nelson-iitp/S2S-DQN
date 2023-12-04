@@ -84,6 +84,15 @@ class Gene:
             if len(neighbours)>0: lt = ll_rng.choice(neighbours, size=1)[0]
         ll = np.array(locs[0:steps])
         return ll 
+
+
+    @staticmethod
+    def generate_paths_geolife(geolife_npy, network, steps, seed):
+        # generate a sequence of locations
+        npy = np.load(geolife_npy)
+        assert npy.all()<network.E, f'Invalid Input: trajectory covers more zones than no. of edge nodes!'
+        if steps is None: steps = len(npy)
+        return npy[0:steps] 
     
     @staticmethod
     def get_apps(params, n_apps, steps, seed):
@@ -109,12 +118,21 @@ class Gene:
         return {f'path_{pathid}': __class__.generate_paths(network, steps, rng.integers(min_seed, max_seed)) for pathid in range(n_paths)}
 
     @staticmethod
-    def make_ds(path, network, n_apps, n_paths, n_steps, app_seed, path_seed):
+    def get_paths_geolife(geolife_npys, steps, network, seed):
+        rng = np.random.default_rng(seed)
+        min_seed, max_seed = 99, 999999999999999
+        return {f'path_{pathid}': __class__.generate_paths_geolife(geolife_npy, network, steps, rng.integers(min_seed, max_seed)) for pathid,geolife_npy in enumerate(geolife_npys)}
+    
+    @staticmethod
+    def make_ds(geolife_npy_list, path, network, n_apps, n_paths, n_steps, app_seed, path_seed):
         warnings.filterwarnings("ignore", category=RuntimeWarning)
         print(f'Create dataset @ {path}')
         #os.makedirs(path, exist_ok=True)
         appd = __class__.get_apps(GLOBAL_PARAMS, n_apps=n_apps, steps=n_steps, seed=app_seed)
-        pathd = __class__.get_paths(n_paths=n_paths, steps=n_steps, network=network, seed=path_seed)    
+        if geolife_npy_list:
+            pathd = __class__.get_paths_geolife(geolife_npys=geolife_npy_list, steps=n_steps, network=network, seed=path_seed)    
+        else:
+            pathd = __class__.get_paths(n_paths=n_paths, steps=n_steps, network=network, seed=path_seed)    
 
         states = []
         for pathi, pathg in pathd.items():
