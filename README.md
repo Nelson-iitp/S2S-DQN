@@ -20,3 +20,11 @@ special python packages (available on PyPI)
 ## Run
 
 See `experiment.ipynb` for details and sample experimental setup
+
+
+## Data
+
+Geolife Dataset is not provided in this repository. Visit the following for more information
+
+* [Geolife-1.3-download-page](https://www.microsoft.com/en-us/download/details.aspx?id=52367)
+* [Geolife-1.3-user-guide](https://www.microsoft.com/en-us/research/publication/geolife-gps-trajectory-dataset-user-guide/)

@@ -152,9 +152,9 @@ class ExpA(Exp):
 
         # encoder arguments
         self.coderArgsE={
-            'd_model':          32,
+            'd_model':          256,
             'nhead':            4,
-            'dim_feedforward':  64,
+            'dim_feedforward':  512,
             'dropout':          0.0,
             'activation':       "gelu",
             'normF':            ktf.Norm.rmsN,
@@ -165,9 +165,9 @@ class ExpA(Exp):
         
         # decoder arguments
         self.coderArgsD={
-            'd_model':          32*dim_multiplier,
+            'd_model':          256*dim_multiplier,
             'nhead':            4*dim_multiplier,
-            'dim_feedforward':  64*dim_multiplier,
+            'dim_feedforward':  512*dim_multiplier,
             'dropout':          0.0,
             'activation':       "gelu",
             'normF':            ktf.Norm.rmsN,
@@ -182,7 +182,7 @@ class ExpA(Exp):
             dense_layer_dims=[64*dim_multiplier, 64*dim_multiplier, 64*dim_multiplier ],
             dense_actFs=[ nn.Tanh(), nn.ELU() ],
             dense_bias=True,
-            edl_mapping= None,
+            edl_mapping= [i for i in range(len(self.env.encoder_vocab_sizes))]+[i for i in range(len(self.env.encoder_vocab_sizes))],
             xavier_init=False,
         )
         
@@ -195,7 +195,7 @@ class ExpA(Exp):
                     block_size=self.T, 
                     **self.factory),
                 coderA=self.coderArgsE,
-                num_layers=1,
+                num_layers=2,
                 norm=None,
                 **self.factory) \
             for encoder_vocab_size in self.env.encoder_vocab_sizes]
@@ -208,7 +208,7 @@ class ExpA(Exp):
                     block_size=self.T, 
                     **self.factory),
                 coderA=self.coderArgsD,
-                num_layers=4,
+                num_layers=8,
                 norm=None,
                 **self.factory)
     

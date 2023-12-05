@@ -214,22 +214,7 @@ class MS2SDQN(S2SDQN):
                 memory_key_padding_mask=None,)
         return out
     
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-""" [*] Multi MLP DQN Value Network """
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-class MMLPDQN(S2SDQN):
-
-    def forward(self, state, target=False): #<-- called in batch mode
-        #key_padding_mask = state[:, self.sep_mask_L:self.sep_mask_H]
-        print(f'{state=}')
-
-        x = tt.cat(state, dim=-1).to(**self.factory) #<--- catentate all input sequences
-        print(f'{x.shape=}, {x=}')
-        if target: out = self.theta_(x)
-        else:      out = self.theta (x)
-        return out
-    
 """ [*] Policy Evaluation/Testing 
     NOTE: make sure to put policies in .eval() mode before predicting
 """
